@@ -23,9 +23,9 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, d_in, d_out, context_len, dropout, n_head, qkv_bias=False):
         assert d_out % n_head == 0
         super().__init__()
-        self.k_W = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.q_W = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.v_W = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_keys = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_queries = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_values = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = nn.Linear(d_out, d_out)
         self.dropout = nn.Dropout(dropout)
         self.d_out = d_out
@@ -37,27 +37,25 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, x):
         B, T, C = x.shape
-        keys: torch.Tensor = self.k_W(x).view(B, T, self.n_head, self.head_dim)
-        values: torch.Tensor = self.k_W(x).view(B, T, self.n_head, self.head_dim)
-        queries: torch.Tensor = self.k_W(x).view(B, T, self.n_head, self.head_dim)
+        keys: torch.Tensor = self.W_keys(x).view(B, T, self.n_head, self.head_dim)
+        queries: torch.Tensor = self.W_queries(x).view(B, T, self.n_head, self.head_dim)
+        values: torch.Tensor = self.W_values(x).view(B, T, self.n_head, self.head_dim)
         ## (B, T, self.n_head, self.head_dim) -> (B, self.n_head, T,  self.head_dim)
         keys = keys.permute(0, 2, 1, 3)
+        queries = queries.permute(0, 2, 1, 3)        
         values = values.permute(0, 2, 1, 3)
-        queries = queries.permute(0, 2, 1, 3)
-        omega = queries @ keys.transpose(3, 2)
+        omega = queries @ keys.transpose( 2, 3)
         # mask
         omega.masked_fill_(self.mask.bool()[:T, :T], -torch.inf)
         # scaled att weight
-        att_weight = self.dropout(torch.softmax(omega / keys.shape[-1] ** -1, dim=-1))
+        att_weight = self.dropout(torch.softmax(omega / keys.shape[-1] ** 0.5, dim=-1))
         # (B, no_of_heads, T, head_dim) -> (B, T, no_of_heads, head_dim)
         out = (att_weight @ values).transpose(1, 2)
-        return self.out_proj(out.view(B, T, self.d_out))
+        return self.out_proj(out.contiguous().view(B, T, self.d_out))
 
 
-class GeLU(nn.modules):
-    def __init__(
-        self,
-    ):
+class GeLU(nn.Module):
+    def __init__(self):
         super().__init__()
 
     def forward(self, x):
@@ -67,7 +65,8 @@ class GeLU(nn.modules):
             * (
                 1
                 + torch.tanh(
-                    torch.sqrt(2 / torch.pi) * (x + 0.044715 * torch.pow(x, 3))
+                    torch.sqrt(torch.tensor(2.0 / torch.pi))
+                    * (x + 0.044715 * torch.pow(x, 3))
                 )
             )
         )
@@ -84,7 +83,7 @@ class LayerNorm(nn.Module):
         mean = x.mean(dim=-1, keepdim=True)
         var = x.var(dim=-1, keepdim=True, unbiased=False)
         norm = (x - mean) / torch.sqrt(var + self.epsilon)
-        return self.scale * (norm + self.shift)
+        return self.scale * norm + self.shift
 
 
 class TransformerBlock(nn.Module):
@@ -133,22 +132,22 @@ class FeedForward(nn.Module):
 class GPTModel(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
-        self.token_embed = nn.Embedding(config.vocab_size, config.emb_dim)
-        self.pos_embed = nn.Embedding(torch.arange(config.vocab_size, config.emb_dim))
+        self.tok_embed = nn.Embedding(config.vocab_size, config.emb_dim)
+        self.pos_embed = nn.Embedding(config.context_length, config.emb_dim)
         self.dropout = nn.Dropout(config.drop_rate)
-        self.transformer_block = nn.Sequential(
-            [TransformerBlock(config) for _ in range(config.n_layers)]
+        self.transformer_blocks = nn.Sequential(
+            *[TransformerBlock(config) for _ in range(config.n_layers)]
         )
         self.norm = LayerNorm(config.emb_dim)
         self.linear = nn.Linear(config.emb_dim, config.vocab_size, bias=False)
 
     def forward(self, x):
-        B, T, C = x.shape
-        tok_embed = self.token_embed(x)
+        B, T = x.shape
+        tok_embed = self.tok_embed(x)
         pos_embed = self.pos_embed(torch.arange(T, device=x.device))
         x = tok_embed + pos_embed
         x = self.dropout(x)
-        x = self.transformer_block(x)
+        x = self.transformer_blocks(x)
         x = self.norm(x)
         logits = self.linear(x)
         return logits
