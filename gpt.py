@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 Tensor: TypeAlias = torch.Tensor
+
+
 ### FeedForward Layer
 ### LayerNorm
 ### MultiHead Attention
@@ -43,9 +45,9 @@ class MultiHeadAttention(nn.Module):
         values: Tensor = self.W_values(x).view(B, T, self.n_head, self.head_dim)
         ## (B, T, self.n_head, self.head_dim) -> (B, self.n_head, T,  self.head_dim)
         keys = keys.permute(0, 2, 1, 3)
-        queries = queries.permute(0, 2, 1, 3)        
+        queries = queries.permute(0, 2, 1, 3)
         values = values.permute(0, 2, 1, 3)
-        omega = queries @ keys.transpose( 2, 3)
+        omega = queries @ keys.transpose(2, 3)
         # mask
         omega.masked_fill_(self.mask.bool()[:T, :T], -torch.inf)
         # scaled att weight
