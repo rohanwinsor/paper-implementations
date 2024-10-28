@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 from dataclasses import dataclass
+from typing import TypeAlias
 
-
+Tensor: TypeAlias = torch.Tensor
 ### FeedForward Layer
 ### LayerNorm
 ### MultiHead Attention
@@ -37,9 +38,9 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, x):
         B, T, C = x.shape
-        keys: torch.Tensor = self.W_keys(x).view(B, T, self.n_head, self.head_dim)
-        queries: torch.Tensor = self.W_queries(x).view(B, T, self.n_head, self.head_dim)
-        values: torch.Tensor = self.W_values(x).view(B, T, self.n_head, self.head_dim)
+        keys: Tensor = self.W_keys(x).view(B, T, self.n_head, self.head_dim)
+        queries: Tensor = self.W_queries(x).view(B, T, self.n_head, self.head_dim)
+        values: Tensor = self.W_values(x).view(B, T, self.n_head, self.head_dim)
         ## (B, T, self.n_head, self.head_dim) -> (B, self.n_head, T,  self.head_dim)
         keys = keys.permute(0, 2, 1, 3)
         queries = queries.permute(0, 2, 1, 3)        
@@ -65,7 +66,7 @@ class GeLU(nn.Module):
             * (
                 1
                 + torch.tanh(
-                    torch.sqrt(torch.tensor(2.0 / torch.pi))
+                    torch.sqrt(Tensor(2.0 / torch.pi))
                     * (x + 0.044715 * torch.pow(x, 3))
                 )
             )
@@ -79,7 +80,7 @@ class LayerNorm(nn.Module):
         self.shift = nn.Parameter(torch.zeros(embed_dim))
         self.scale = nn.Parameter(torch.ones(embed_dim))
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: Tensor):
         mean = x.mean(dim=-1, keepdim=True)
         var = x.var(dim=-1, keepdim=True, unbiased=False)
         norm = (x - mean) / torch.sqrt(var + self.epsilon)
@@ -141,7 +142,7 @@ class GPTModel(nn.Module):
         self.norm = LayerNorm(config.emb_dim)
         self.linear = nn.Linear(config.emb_dim, config.vocab_size, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: Tensor):
         B, T = x.shape
         tok_embed = self.tok_embed(x)
         pos_embed = self.pos_embed(torch.arange(T, device=x.device))
