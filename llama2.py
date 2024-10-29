@@ -6,7 +6,7 @@ from utils.utils import model_memory_size
 from typing import TypeAlias
 import sentencepiece as spm
 from huggingface_hub import login
-from utils.utils import generate, text_to_token_ids, token_ids_to_text
+from utils.utils import generate, text_to_token_ids, token_ids_to_text, load_weights_into_llama
 try:
     login(token=os.environ["HF_ACCESS_TOKEN"])
 except:
@@ -74,7 +74,7 @@ class FeedForward(nn.Module):
     def forward(self, x):
         x_fc1 = self.fc1(x)
         x_fc2 = self.fc2(x)
-        x = self.silu(x_fc1) + x_fc2
+        x = self.silu(x_fc1) * x_fc2
         return self.fc3(x)
 
 
@@ -154,7 +154,7 @@ class MultiHeadAttention(nn.Module):
         queries = queries.permute(0, 2, 1, 3)
         values = values.permute(0, 2, 1, 3)
         keys = compute_rope(keys, self.cos, self.sin)
-        queries = compute_rope(keys, self.cos, self.sin)
+        queries = compute_rope(queries, self.cos, self.sin)
         omega = queries @ keys.transpose(2, 3)
         # mask
         omega.masked_fill_(self.mask.bool()[:T, :T], -torch.inf)
@@ -183,10 +183,10 @@ class TransformerBlock(nn.Module):
         shortcut = x
         x = self.rms_norm1(x)
         x = self.att(x)
-        x += shortcut
+        x = x + shortcut
         shortcut = x
         x = self.ff(self.rms_norm2(x))
-        x += shortcut
+        x = x + shortcut
         return x
 
 
@@ -204,7 +204,7 @@ class LLama2(nn.Module):
             *[TransformerBlock(config) for _ in range(config.n_layers)]
         )
         self.norm = RMSNorm(config.emb_dim)
-        self.out_head = nn.Linear(
+        self.output = nn.Linear(
             config.emb_dim, config.vocab_size, bias=False, dtype=config.dtype
         )
 
@@ -212,7 +212,7 @@ class LLama2(nn.Module):
         tok_emb = self.tok_embed(x)
         x = self.transformers_block(tok_emb)
         x = self.norm(x)
-        return self.out_head(x)
+        return self.output(x)
 
 
 if __name__ == "__main__":
@@ -231,14 +231,23 @@ if __name__ == "__main__":
         local_dir="tokenizers/Llama-2-7b"
     )
     tokenizer = LlamaTokenizer(tokenizer_file)
-    device = "gpu" if torch.cuda.is_available() else "cpu"
+    device = "mps"
+
+    weights_file = hf_hub_download(
+   repo_id="meta-llama/Llama-2-7b",
+   filename="consolidated.00.pth",
+   local_dir="models/Llama-2-7b"
+)
+    weights = torch.load(weights_file, weights_only=True)
+
+    load_weights_into_llama(model, Llama2Config, weights)
+    model.to(device)
     token_ids = generate(
         model=model,
         idx=text_to_token_ids("Every effort moves", tokenizer).to(device),
-        max_output_token=30,
+        max_output_token=5,
         context_length=Llama2Config().context_length,
         top_k=1,
         temperate=0.
     )
-
     print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
