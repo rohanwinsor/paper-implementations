@@ -1,3 +1,8 @@
+# This code is copied from Sebastian Raschka's LLMs-from-scratch repository
+# Repository URL: https://github.com/rasbt/LLMs-from-scratch
+# Original Author: Sebastian Raschka (rasbt)
+# License: Apache License 2.0
+
 import torch
 import numpy as np
 from tqdm import trange
@@ -165,3 +170,65 @@ def text_to_token_ids(text, tokenizer):
 def token_ids_to_text(token_ids, tokenizer):
     flat = token_ids.squeeze(0)
     return tokenizer.decode(flat.tolist())  # removing the batch dimension
+
+def assign(left, right):
+    if left.shape != right.shape:
+        raise ValueError(f"Shape mismatch. Left: {left.shape}, Right: {right.shape}")
+
+    if isinstance(right, torch.Tensor):
+        return torch.nn.Parameter(right.clone().detach())
+    else:
+        print(type(right))
+        return torch.nn.Parameter(torch.tensor(right))
+
+
+def load_weights_into_llama(model, param_config, params):
+    model.tok_embed.weight = assign(model.tok_embed.weight, params["tok_embeddings.weight"])
+
+    for l in range(param_config.n_layers):
+
+        # Load attention weights
+        model.transformers_block[l].att.W_queries.weight = assign(
+            model.transformers_block[l].att.W_queries.weight,
+            params[f"layers.{l}.attention.wq.weight"]
+        )
+        model.transformers_block[l].att.W_keys.weight = assign(
+            model.transformers_block[l].att.W_keys.weight,
+            params[f"layers.{l}.attention.wk.weight"]
+        )
+        model.transformers_block[l].att.W_values.weight = assign(
+            model.transformers_block[l].att.W_values.weight,
+            params[f"layers.{l}.attention.wv.weight"]
+        )
+        model.transformers_block[l].att.out_proj.weight = assign(
+            model.transformers_block[l].att.out_proj.weight,
+            params[f"layers.{l}.attention.wo.weight"]
+        )
+        model.transformers_block[l].rms_norm1.weight = assign(
+            model.transformers_block[l].rms_norm1.weight,
+            params[f"layers.{l}.attention_norm.weight"]
+        )
+
+        # Load FeedForward weights
+        model.transformers_block[l].ff.fc1.weight = assign(
+            model.transformers_block[l].ff.fc1.weight,
+            params[f"layers.{l}.feed_forward.w1.weight"]
+        )
+        # For some reason w2 and w3 are provided in the wrong order in the weights file
+        model.transformers_block[l].ff.fc2.weight = assign(
+            model.transformers_block[l].ff.fc2.weight,
+            params[f"layers.{l}.feed_forward.w3.weight"]
+        )
+        model.transformers_block[l].ff.fc3.weight = assign(
+            model.transformers_block[l].ff.fc3.weight,
+            params[f"layers.{l}.feed_forward.w2.weight"]
+        )
+        model.transformers_block[l].rms_norm2.weight = assign(
+            model.transformers_block[l].rms_norm2.weight,
+            params[f"layers.{l}.ffn_norm.weight"]
+        )
+
+    # Load output layer weights
+    model.norm.weight = assign(model.norm.weight, params["norm.weight"])
+    model.output.weight = assign(model.output.weight, params["output.weight"])
+
